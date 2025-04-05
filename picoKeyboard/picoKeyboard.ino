@@ -12,33 +12,38 @@
 #include <Keyboard.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <FatFS.h>
+#include <FatFSUSB.h>
 
-#define SCREEN_WIDTH 128  // OLED display width, in pixels
-#define SCREEN_HEIGHT 64  // OLED display height, in pixels
+
+#define SCREEN_ADDRESS 0x3C  ///< See datasheet for Address; 0x3C
+#define SCREEN_WIDTH 128     // OLED display width, in pixels
+#define SCREEN_HEIGHT 64     // OLED display height, in pixels
 #define SCREEN_LINE 16
 #define SCREEN_CHAR 10
 #define QUAD_W 4
 #define QUAD_H 6
 
-#define SCREEN_ADDRESS 0x3C  ///< See datasheet for Address; 0x3C
-
 #define LIVE_LED 22  // Actual Arduino pin number
 
-#define IN_PIN_A 7    // Actual Arduino pin number
-#define BIT_PIN_A 2   // Bit position in buttonBits. Must be 1,2,4,8,16,,,
-#define QUAD_PIN_A 0  //
+#define BIT_ALL 255
+#define BIT_NONE 0
 
-#define IN_PIN_B 8    // Actual Arduino pin number
-#define BIT_PIN_B 1   // Bit position in buttonBits. Must be 1,2,4,8,16,,,
-#define QUAD_PIN_B 1  //
+#define IN_PIN_A 7  // Actual Arduino pin number
+#define BIT_1 1     // Bit position in buttonBits. Must be 1,2,4,8,16,,,
+#define QUAD_0 0    //
 
-#define IN_PIN_C 14   // Actual Arduino pin number
-#define BIT_PIN_C 8   // Bit position in buttonBits. Must be 1,2,4,8,16,,,
-#define QUAD_PIN_C 2  //
+#define IN_PIN_B 8  // Actual Arduino pin number
+#define BIT_2 2     // Bit position in buttonBits. Must be 1,2,4,8,16,,,
+#define QUAD_1 1    //
 
-#define IN_PIN_D 6    // Actual Arduino pin number
-#define BIT_PIN_D 4   // Bit position in buttonBits. Must be 1,2,4,8,16,,,
-#define QUAD_PIN_D 3  //
+#define IN_PIN_C 14  // Actual Arduino pin number
+#define BIT_4 4      // Bit position in buttonBits. Must be 1,2,4,8,16,,,
+#define QUAD_2 2     //
+
+#define IN_PIN_D 6  // Actual Arduino pin number
+#define BIT_8 8     // Bit position in buttonBits. Must be 1,2,4,8,16,,,
+#define QUAD_3 3    //
 
 // Menu height is 1 + 3 for large display, 7 for small as yellow is always 2 lines
 #define MENU_HEIGHT_LARGE 4
@@ -47,7 +52,7 @@
 #define MODE_SETUP 0
 #define MODE_MENU 1
 #define MODE_HID 2
-#define MODE_USB 3
+#define MODE_PGM 3
 
 // Screen rotation for LHS and RHS plug in.
 #define ROTATE_LHS 0
@@ -64,67 +69,48 @@
 #define ACTION_RESET 7
 #define ACTION_PGM 0
 
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire);
+
 int menuHeight = 0;  // Default menu height
 int menuLine = 0;
 bool menuMax = true;
 uint8_t screenRotation = ROTATE_LHS;
 int displayMode = MODE_SETUP;
 int buttonBits = 0;
+int tos = 0;
+int oldTos = 0;
+volatile bool updateScreen = true;  // Screen needs to be redrawn
 
-bool updateScreen = true;  // Screen needs to be redrawn
+volatile bool driveConnected = false;
 
-struct keyMap {
-  int rot;
-  int mode;
-  int buttonBit;
-  int action;
-};
-
-keyMap keyMapping[] = {
-  { ROTATE_LHS, MODE_HID, BIT_PIN_A, ACTION_SEND },
-  { ROTATE_LHS, MODE_HID, BIT_PIN_B, ACTION_UP },
-  { ROTATE_LHS, MODE_HID, BIT_PIN_C, ACTION_CONFIG },
-  { ROTATE_LHS, MODE_HID, BIT_PIN_D, ACTION_DOWN },
-
-  { ROTATE_LHS, MODE_MENU, BIT_PIN_A, ACTION_RESET },
-  { ROTATE_LHS, MODE_MENU, BIT_PIN_B, ACTION_LINES },
-  { ROTATE_LHS, MODE_MENU, BIT_PIN_C, ACTION_PGM },
-  { ROTATE_LHS, MODE_MENU, BIT_PIN_D, ACTION_ROTATE },
-
-  { ROTATE_RHS, MODE_HID, BIT_PIN_A, ACTION_CONFIG },
-  { ROTATE_RHS, MODE_HID, BIT_PIN_B, ACTION_DOWN },
-  { ROTATE_RHS, MODE_HID, BIT_PIN_C, ACTION_SEND },
-  { ROTATE_RHS, MODE_HID, BIT_PIN_D, ACTION_UP },
-
-  { ROTATE_RHS, MODE_MENU, BIT_PIN_A, ACTION_PGM },
-  { ROTATE_RHS, MODE_MENU, BIT_PIN_B, ACTION_ROTATE },
-  { ROTATE_RHS, MODE_MENU, BIT_PIN_C, ACTION_RESET },
-  { ROTATE_RHS, MODE_MENU, BIT_PIN_D, ACTION_LINES }
-};
-int keyMappingLen = sizeof(keyMapping) / sizeof(keyMap);
-
-int findAction() {
-  for (int i = 0; i < keyMappingLen; i++) {
-    if ((keyMapping[i].rot == screenRotation) && (keyMapping[i].mode == displayMode) && ((keyMapping[i].buttonBit & buttonBits) != 0)) {
-      return keyMapping[i].action;
-    }
+void printDiag(String s) {
+  if (Serial) {
+    Serial.println(s);
   }
-  return ACTION_NONE;
+}
+void unplug(uint32_t i) {
+  (void)i;
+  driveConnected = false;
+  Serial.println("unplug");
+}
+
+// Called by FatFSUSB when the drive is mounted by the PC.  Have to stop FatFS, since the drive data can change, note it, and continue.
+void plug(uint32_t i) {
+  (void)i;
+  driveConnected = true;
+  Serial.println("plug");
+}
+
+// Called by FatFSUSB to determine if it is safe to let the PC mount the USB drive.  If we're accessing the FS in any way, have any Files open, etc. then it's not safe to let the PC mount the drive.
+bool mountable(uint32_t i) {
+  (void)i;
+  return true;
 }
 
 struct option {
   String disp;
   String keys;
 };
-
-String configOptions[] = {
-  { " Reset" },
-  { " Size" },
-  { " Program" },
-  { " Rotate" }
-};
-
-int configOptionsLen = sizeof(configOptions) / sizeof(String);
 
 // Number of options. Not display specific
 option options[] = {
@@ -141,68 +127,117 @@ option options[] = {
 
 int optionCount = sizeof(options) / sizeof(option);
 
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire);
 
-int tos = 0;
-int oldTos = 0;
+bool scanButtons() {
+  int bb = 0;
+  if (digitalRead(IN_PIN_A) == LOW) {
+    if (screenRotation == ROTATE_LHS) {
+      bb = bb | BIT_1;
+    } else {
+      bb = bb | BIT_4;
+    }
+  }
+  if (digitalRead(IN_PIN_B) == LOW) {
+    if (screenRotation == ROTATE_LHS) {
+      bb = bb | BIT_2;
+    } else {
+      bb = bb | BIT_8;
+    }
+  }
+  if (digitalRead(IN_PIN_C) == LOW) {
+    if (screenRotation == ROTATE_LHS) {
+      bb = bb | BIT_4;
+    } else {
+      bb = bb | BIT_1;
+    }
+  }
+  if (digitalRead(IN_PIN_D) == LOW) {
+    if (screenRotation == ROTATE_LHS) {
+      bb = bb | BIT_8;
+    } else {
+      bb = bb | BIT_2;
+    }
+  }
+  buttonBits = bb;
+  return (bb != 0);
+}
 
 void box(int lin, int quad) {
   display.drawRect(0, lin * SCREEN_LINE, SCREEN_CHAR, SCREEN_LINE, WHITE);
+  if (screenRotation == ROTATE_RHS) {  // Rotate the Quadrant
+    switch (quad) {
+      case QUAD_0:
+        quad = QUAD_1;
+        break;
+      case QUAD_1:
+        quad = QUAD_0;
+        break;
+      case QUAD_2:
+        quad = QUAD_3;
+        break;
+      case QUAD_3:
+        quad = QUAD_2;
+        break;
+    }
+  }
   switch (quad) {
-    case QUAD_PIN_A:
+    case QUAD_0:
       display.fillRect(2, lin * SCREEN_LINE + 2, QUAD_W, QUAD_H, WHITE);
       break;
-    case QUAD_PIN_B:
+    case QUAD_1:
       display.fillRect(QUAD_W, lin * SCREEN_LINE + 2, QUAD_W, QUAD_H, WHITE);
       break;
-    case QUAD_PIN_C:
+    case QUAD_2:
       display.fillRect(2, lin * SCREEN_LINE + (QUAD_H + 2), QUAD_W, QUAD_H, WHITE);
       break;
-    case QUAD_PIN_D:
+    case QUAD_3:
       display.fillRect(QUAD_W, lin * SCREEN_LINE + (QUAD_H + 2), QUAD_W, QUAD_H, WHITE);
       break;
   }
 }
 
-void resetScreen(bool showButtons) {
+void resetScreen(int showButtons) {
   display.clearDisplay();
   display.setRotation(screenRotation);
   display.setCursor(0, 0);
   display.setTextSize(2);
-  if (showButtons) {
-    if (screenRotation == ROTATE_LHS) {
-      box(0, QUAD_PIN_A);
-      box(1, QUAD_PIN_B);
-      box(2, QUAD_PIN_C);
-      box(3, QUAD_PIN_D);
-    } else {
-      box(0, QUAD_PIN_B);
-      box(1, QUAD_PIN_A);
-      box(2, QUAD_PIN_D);
-      box(3, QUAD_PIN_C);
-    }
+  if ((showButtons & BIT_1) == BIT_1) {
+    box(0, QUAD_0);
+  }
+  if ((showButtons & BIT_2) == BIT_2) {
+    box(1, QUAD_1);
+  }
+  if ((showButtons & BIT_4) == BIT_4) {
+    box(2, QUAD_2);
+  }
+  if ((showButtons & BIT_8) == BIT_8) {
+    box(3, QUAD_3);
   }
 }
 
-void updateScreenUsb() {
+void updateScreenPgm() {
   updateScreen = false;
-  resetScreen(true);
-  display.println(" USB:");
+  resetScreen(BIT_2 | BIT_4 | BIT_8);
+  display.println("Program:");
+  display.println(" Ident");
+  display.println(" Upload");
+  display.println(" Reset");
   display.display();
 }
 
 void updateScreenMenu() {
   updateScreen = false;
-  resetScreen(true);
-  for (int i = 0; i < configOptionsLen; i++) {
-    display.println(configOptions[i]);
-  }
+  resetScreen(BIT_ALL);
+  display.println(" Reset");
+  display.println(" Size");
+  display.println(" Rotate");
+  display.println(" Back");
   display.display();
 }
 
 void updateScreenHid() {
   updateScreen = false;
-  resetScreen(false);
+  resetScreen(BIT_NONE);
   menuLine = tos;
   display.println(options[menuLine].disp);
   if (menuMax) {
@@ -234,7 +269,7 @@ void sendKeys(String ch) {
 }
 
 void sendButtonPressed() {
-  resetScreen(false);
+  resetScreen(BIT_NONE);
   display.println("Sending...");
   display.println(options[tos].disp);
   display.display();
@@ -274,19 +309,11 @@ void downButtonPressed() {
 }
 
 void reset() {
-  resetScreen(false);
+  resetScreen(BIT_NONE);
   display.println("Reset...");
   display.display();
-  delay(500);
+  delay(1000);
   rp2040.reboot();
-}
-
-void program() {
-  resetScreen(false);
-  display.println("Program...");
-  display.display();
-  delay(500);
-  setMode(MODE_HID);
 }
 
 void rotateDisplay() {
@@ -299,7 +326,7 @@ void rotateDisplay() {
 }
 
 void setLines() {
-  resetScreen(false);
+  resetScreen(BIT_NONE);
   menuMax = !menuMax;
   display.println("ZOOM");
   if (menuMax) {
@@ -325,102 +352,124 @@ void errorCode(int c) {
   }
 }
 
-bool scanButtons() {
-  int bb = 0;
-  if (digitalRead(IN_PIN_B) == LOW) {
-    bb = bb | BIT_PIN_B;
-  }
-  if (digitalRead(IN_PIN_A) == LOW) {
-    bb = bb | BIT_PIN_A;
-  }
-  if (digitalRead(IN_PIN_D) == LOW) {
-    bb = bb | BIT_PIN_D;
-  }
+bool programButtons() {
   if (digitalRead(IN_PIN_C) == LOW) {
-    bb = bb | BIT_PIN_C;
+    screenRotation = ROTATE_RHS;
   }
-  buttonBits = bb;
-  return (bb != 0);
-}
-
-void printDiag(String s) {
-  if (Serial) {
-    Serial.println(s);
-  }
+  return (digitalRead(IN_PIN_A) == LOW) || (digitalRead(IN_PIN_C) == LOW);
 }
 
 void setup() {
-  pinMode(LIVE_LED, OUTPUT);
-  pinMode(IN_PIN_B, INPUT_PULLUP);
   pinMode(IN_PIN_A, INPUT_PULLUP);
+  pinMode(IN_PIN_B, INPUT_PULLUP);
   pinMode(IN_PIN_D, INPUT_PULLUP);
   pinMode(IN_PIN_C, INPUT_PULLUP);
-  if (scanButtons()) {
-    //      action = findAction();
+  pinMode(LIVE_LED, OUTPUT);
 
+
+  digitalWrite(LIVE_LED, HIGH);
+  if (programButtons()) {
+    digitalWrite(LIVE_LED, LOW);
     Serial.begin(9600);
     while (!Serial) {
-      ;  // wait for serial port to connect. Needed for native USB port only
+      delay(1);
     }
-    delay(500);
-    printDiag("Config serial out active.");
-    setMode(MODE_USB);
+    delay(5000);
+    if (!FatFS.begin()) {
+      Serial.println("FatFS initialization failed!");
+      while (1) {
+        delay(1);
+      }
+    }
+    Serial.println("FatFS initialization done.");
+    FatFSUSB.onUnplug(unplug);
+    FatFSUSB.onPlug(plug);
+    FatFSUSB.driveReady(mountable);
+    // Start FatFS USB drive mode
+    FatFSUSB.begin();
+    Serial.println("FatFSUSB started.");
+
+    while (programButtons()) {
+      delay(500);
+    }
+    setMode(MODE_PGM);
   } else {
-    Keyboard.begin();
     setMode(MODE_HID);
   }
-  digitalWrite(LIVE_LED, HIGH);
 
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     errorCode(4);
   }
   // Clear the buffer
-  resetScreen(false);
+  resetScreen(BIT_NONE);
   display.setTextColor(SSD1306_WHITE);  // Draw white text
   display.println("Setup...");
   display.display();
+  digitalWrite(LIVE_LED, HIGH);
   delay(500);
-  
   updateScreen = true;
+  buttonBits = 0;
 }
 
 void loop() {
   if (scanButtons()) {
     digitalWrite(LIVE_LED, LOW);
-    switch (findAction()) {
-      case ACTION_UP:
-        upButtonPressed();
+    switch (displayMode) {
+      case MODE_HID:
+        if ((buttonBits & BIT_1) == BIT_1) {
+          sendButtonPressed();
+        } else {
+          if ((buttonBits & BIT_2) == BIT_2) {
+            upButtonPressed();
+          } else {
+            if ((buttonBits & BIT_4) == BIT_4) {
+              setMode(MODE_MENU);
+            } else {
+              if ((buttonBits & BIT_8) == BIT_8) {
+                downButtonPressed();
+              }
+            }
+          }
+        }
         break;
-      case ACTION_DOWN:
-        downButtonPressed();
+      case MODE_MENU:
+        if ((buttonBits & BIT_1) == BIT_1) {
+          reset();
+        } else {
+          if ((buttonBits & BIT_2) == BIT_2) {
+            setLines();
+          } else {
+            if ((buttonBits & BIT_4) == BIT_4) {
+              rotateDisplay();
+            } else {
+              if ((buttonBits & BIT_8) == BIT_8) {
+                setMode(MODE_HID);
+              }
+            }
+          }
+        }
         break;
-      case ACTION_SEND:
-        sendButtonPressed();
+      case MODE_PGM:
+        if ((buttonBits & BIT_2) == BIT_2) {
+          printDiag("IDENT");
+        } else {
+          if ((buttonBits & BIT_4) == BIT_4) {
+          } else {
+            if ((buttonBits & BIT_8) == BIT_8) {
+              reset();
+            }
+          }
+        }
         break;
-      case ACTION_CONFIG:
-        setMode(MODE_MENU);
-        break;
-      case ACTION_LINES:
-        setLines();
-        break;
-      case ACTION_ROTATE:
-        rotateDisplay();
-        break;
-      case ACTION_RESET:
-        reset();
-        break;
-      // case ACTION_PGM:
-      //   program();
-      //   break;
     }
     digitalWrite(LIVE_LED, HIGH);
   }
 
   if (updateScreen) {
     switch (displayMode) {
-      case MODE_USB:
-        updateScreenUsb();
+      case MODE_PGM:
+        updateScreenPgm();
         break;
       case MODE_HID:
         updateScreenHid();
