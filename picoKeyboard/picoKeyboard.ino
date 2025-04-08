@@ -15,6 +15,13 @@
 #include <FatFS.h>
 #include <FatFSUSB.h>
 
+#define MENU_FILE "menu.txt"
+#define EEPROM_FILE "eeprom.dat"
+#define EEPROM_LEN 10
+#define EEPROM_ROTATE 0
+#define EEPROM_MENU_MAX 1
+#define EEPROM_TRUE '1'
+#define EEPROM_FALSE '0'
 
 #define SCREEN_ADDRESS 0x3C  ///< See datasheet for Address; 0x3C
 #define SCREEN_WIDTH 128     // OLED display width, in pixels
@@ -65,23 +72,12 @@
 #define ROTATE_LHS 0
 #define ROTATE_RHS 2
 
-// Unique Actions for mode, rotation and buttonBits
-#define ACTION_NONE 0
-#define ACTION_UP 1
-#define ACTION_DOWN 2
-#define ACTION_SEND 3
-#define ACTION_CONFIG 4
-#define ACTION_LINES 5
-#define ACTION_ROTATE 6
-#define ACTION_RESET 7
-#define ACTION_PGM 0
+
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire);
 
 int menuHeight = 0;  // Default menu height
 int menuLine = 0;
-bool menuMax = true;
-uint8_t screenRotation = ROTATE_LHS;
 int displayMode = MODE_SETUP;
 int buttonBits = 0;
 int tos = 0;
@@ -91,13 +87,44 @@ String logSubjectStr = "";
 String logLines[LOG_LINES] = { "", "", "", "", "", "" };
 int logLinePos = 0;
 char numberArray[20];
+uint8_t configFlags[EEPROM_LEN];
+bool eepromLoaded = false;
 
 
+uint8_t getConfigUint(int pos) {
+  return configFlags[pos] - 48;
+}
 
-char menuLines[MENU_LINES][MENU_COLUMNS + 1];
+bool getConfigBool(int pos) {
+  return configFlags[pos] != EEPROM_FALSE;
+}
+
+void setConfigUint(int pos, uint8_t v) {
+  uint8_t vv = getConfigUint(pos);
+  if (v != vv) {
+    configFlags[pos] = v + 48;
+    writeEEpromData();
+  }
+}
+
+void setConfigBool(int pos, bool v) {
+  bool vv = getConfigBool(pos);
+  if (v != vv) {
+    if (v) {
+      configFlags[pos] = EEPROM_TRUE;
+    } else {
+      configFlags[pos] = EEPROM_FALSE;
+    }
+    writeEEpromData();
+  }
+}
+
+struct menuData {
+  char prompt[MENU_COLUMNS + 1];
+  int offset;
+  int len;
+} menuLines[MENU_LINES];
 int menuCount = 0;
-
-volatile bool driveConnected = false;
 
 void printDiag(String s) {
   if (Serial) {
@@ -108,7 +135,7 @@ void printDiag(String s) {
 void logLine(String s, int d) {
   logLines[logLinePos] = s;
   display.clearDisplay();
-  display.setRotation(screenRotation);
+  display.setRotation(getConfigUint(EEPROM_ROTATE));
   display.setCursor(0, 0);
   display.setTextSize(2);
   display.println(logSubjectStr);
@@ -129,6 +156,17 @@ void logLine(String s, int d) {
   delay(d);
 }
 
+void logError(String s, int d) {
+  logLine(s, d + 1);
+  if (d < 2) {
+    waitForButton();
+    if (d == 1) {
+      logLine("Reboot:", 1000);
+      rp2040.reboot();
+    }
+  }
+}
+
 void logSubject(String s) {
   logSubjectStr = s;
   logLinePos = 0;
@@ -136,86 +174,178 @@ void logSubject(String s) {
     logLines[i] = "";
   }
   display.clearDisplay();
-  display.setRotation(screenRotation);
+  display.setRotation(getConfigUint(EEPROM_ROTATE));
   display.setTextSize(2);
   display.setCursor(0, 0);
   display.println(logSubjectStr);
   display.display();
 }
 
+
+void writeEEpromData() {
+  File f = FatFS.open(EEPROM_FILE, "w");
+  if (f) {
+    f.write(configFlags, EEPROM_LEN);
+    f.close();
+    logLine("EEPROM Created", 10);
+  } else {
+    logError("FAIL-OPEN W " + String(EEPROM_FILE), 1);
+  }
+}
+
+void readEEpromData() {
+  File f = FatFS.open(EEPROM_FILE, "r");
+  if (f) {
+    int pos = 0;
+    while (f.available()) {
+      configFlags[pos] = char(f.read());
+      pos++;
+      if (pos >= EEPROM_LEN) {
+        break;
+      }
+    }
+    f.close();
+    eepromLoaded = true;
+    logLine("EEPROM Loaded", 10);
+  } else {
+    logError("FAIL-OPEN R " + String(EEPROM_FILE), 1);
+  }
+}
+
 int readKeyFile(File f) {
   for (int x = 0; x < MENU_LINES; x++) {
     for (int y = 0; y < (MENU_COLUMNS + 1); y++) {
-      menuLines[x][y] = 0;
+      menuLines[x].prompt[y] = 0;
+      menuLines[x].offset = 0;
+      menuLines[x].len = 0;
     }
   }
   int row = 0;
   int coll = 0;
   int char1 = 0;
   int capture = 0;
+  int count = 0;
+  int offset = 0;
   while (f.available()) {
     char1 = f.read();
+    offset++;
     if (char1 == CHAR_CR) {
+      if (menuLines[row].len > 0) {
+        if (menuLines[row].offset == 0) {
+          logLine("Menu: " + String(menuLines[row].prompt), 10);
+          logError("Line: " + String(itoa(row, numberArray, 10)) + " has No keys", 1);
+        }
+        count++;
+      }
       row++;
       if (row >= MENU_LINES) {
-        return MENU_LINES;
+        return count;
       }
       coll = 0;
       capture = 0;
     } else {
       if (char1 == CHAR_DELIM) {
         capture++;
-      } 
-      if ((char1 >= CHAR_SPACE) && (char1 < CHAR_MAXIMUM) && (coll < MENU_COLUMNS) && ((capture == 0) || (capture == 2))) {
-        menuLines[row][coll] = char1;
-        coll++;
-        capture = 0;
+        menuLines[row].offset = offset;
+      }
+      if ((capture == 0) || (capture == 2)) {
+        if ((char1 >= CHAR_SPACE) && (char1 < CHAR_MAXIMUM) && (coll < MENU_COLUMNS)) {
+          menuLines[row].prompt[coll] = char1;
+          menuLines[row].len++;
+          coll++;
+          capture = 0;
+        }
       }
     }
   }
-  return row;
+  return count;
 }
 
-void loadKeyData() {
-  menuCount = 0;
+void sendKeyData(int tos) {
+  int count = 0;
+  logSubject("Sending:");
+  int offset = menuLines[tos].offset;
+  File f = FatFS.open(MENU_FILE, "r");
+  if (f) {
+    logLine("Sending item: " + String(menuLines[tos].prompt), 10);
+    if (f.seek(offset)) {
+      while (f.available()) {
+        int char1 = f.read();
+        if (char1 != CHAR_CR) {
+          Keyboard.press(char1);
+          delay(10);
+          Keyboard.releaseAll();
+          count++;
+        } else {
+          break;
+        }
+      }
+    } else {
+      logError("Seek fail:" + String(itoa(offset, numberArray, 10)), 1);
+    }
+    f.close();
+    logLine("Sent: " + String(itoa(count, numberArray, 10)) + " Keys.", 700);
+  } else {
+    logError("FS openFile FAIL", 1);
+  }
+  stopIfButton();
+}
+
+void loadConfigData() {
+  menuCount = -1;
   logSubject("Loading:");
   logLine("FS Init", 10);
   if (FatFS.begin()) {
     logLine("FS OK", 10);
   } else {
-    logLine("FS FAIL", 5000);
-    return;
+    logError("FS FAIL", 1);
   }
+
+  for (int i = 0; i < EEPROM_LEN; i++) {
+    configFlags[i] = '0';
+  }
+
   Dir dir = FatFS.openDir("/");
   while (true) {
     if (!dir.next()) {
       break;
     }
     if (dir.isFile()) {
-      logLine(dir.fileName(), 10);
-      File f = dir.openFile("r");
-      if (f) {
-        logLine("FS openFile OK", 10);
-        menuCount = readKeyFile(f);
-        logLine("FS openFile done", 10);
-        logLine(itoa(menuCount, numberArray, 10), 11);
-      } else {
-        logLine("FS openFile FAIL", 5000);
-        return;
+      if (dir.fileName() == EEPROM_FILE) {
+        logLine("READ " + dir.fileName(), 10);
+        readEEpromData();
+      }
+      if (dir.fileName() == MENU_FILE) {
+        logLine("READ " + dir.fileName(), 10);
+        File f = dir.openFile("r");
+        if (f) {
+          menuCount = readKeyFile(f);
+          if (menuCount == 0) {
+            logError("No items found", 1);
+          };
+          logLine("ITEMS " + String(itoa(menuCount, numberArray, 10)), 10);
+        } else {
+          logError("FS openFile FAIL", 1);
+        }
       }
     }
   }
+  if (!eepromLoaded) {
+    logLine("NO File " + String(EEPROM_FILE), 1);
+  }
+  if (menuCount == -1) {
+    logError("NO File:" + String(MENU_FILE), 1);
+  }
+  stopIfButton();
 }
 
 void unplug(uint32_t i) {
   (void)i;
-  driveConnected = false;
 }
 
 // Called by FatFSUSB when the drive is mounted by the PC.  Have to stop FatFS, since the drive data can change, note it, and continue.
 void plug(uint32_t i) {
   (void)i;
-  driveConnected = true;
 }
 
 // Called by FatFSUSB to determine if it is safe to let the PC mount the USB drive.  If we're accessing the FS in any way, have any Files open, etc. then it's not safe to let the PC mount the drive.
@@ -224,40 +354,49 @@ bool mountable(uint32_t i) {
   return true;
 }
 
-void waitForButtonC() {
-  while (digitalRead(IN_PIN_C) == HIGH) {
+void waitForButton() {
+  logLine("Press B or D..", 1);
+  while ((digitalRead(IN_PIN_B) == HIGH) && (digitalRead(IN_PIN_D) == HIGH)) {
     delay(10);
   }
-  while (digitalRead(IN_PIN_C) == LOW) {
+  stopIfButton();
+}
+
+void stopIfButton() {
+  while ((digitalRead(IN_PIN_B) == LOW) || (digitalRead(IN_PIN_D) == LOW)) {
     delay(10);
   }
+}
+
+bool programButtons() {
+  return (digitalRead(IN_PIN_A) == LOW) || (digitalRead(IN_PIN_C) == LOW);
 }
 
 bool scanButtons() {
   int bb = 0;
   if (digitalRead(IN_PIN_A) == LOW) {
-    if (screenRotation == ROTATE_LHS) {
+    if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
       bb = bb | BIT_1;
     } else {
       bb = bb | BIT_4;
     }
   }
   if (digitalRead(IN_PIN_B) == LOW) {
-    if (screenRotation == ROTATE_LHS) {
+    if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
       bb = bb | BIT_2;
     } else {
       bb = bb | BIT_8;
     }
   }
   if (digitalRead(IN_PIN_C) == LOW) {
-    if (screenRotation == ROTATE_LHS) {
+    if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
       bb = bb | BIT_4;
     } else {
       bb = bb | BIT_1;
     }
   }
   if (digitalRead(IN_PIN_D) == LOW) {
-    if (screenRotation == ROTATE_LHS) {
+    if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
       bb = bb | BIT_8;
     } else {
       bb = bb | BIT_2;
@@ -269,7 +408,7 @@ bool scanButtons() {
 
 void box(int lin, int quad) {
   display.drawRect(0, lin * SCREEN_LINE, SCREEN_CHAR, SCREEN_LINE, WHITE);
-  if (screenRotation == ROTATE_RHS) {  // Rotate the Quadrant
+  if (getConfigUint(EEPROM_ROTATE) == ROTATE_RHS) {  // Rotate the Quadrant
     switch (quad) {
       case QUAD_0:
         quad = QUAD_1;
@@ -303,7 +442,7 @@ void box(int lin, int quad) {
 
 void clearScreen(int showButtons) {
   display.clearDisplay();
-  display.setRotation(screenRotation);
+  display.setRotation(getConfigUint(EEPROM_ROTATE));
   display.setTextColor(SSD1306_WHITE);  // Draw white text
   display.setTextWrap(false);
   display.setCursor(0, 0);
@@ -324,10 +463,8 @@ void clearScreen(int showButtons) {
 
 void updateScreenPgm() {
   updateScreen = false;
-  clearScreen(BIT_2 | BIT_4 | BIT_8);
+  clearScreen(BIT_2);
   display.println("Program:");
-  display.println(" Ident");
-  display.println(" Upload");
   display.println(" Reset");
   display.display();
 }
@@ -346,8 +483,8 @@ void updateScreenHid() {
   updateScreen = false;
   clearScreen(BIT_NONE);
   menuLine = tos;
-  display.println(menuLines[menuLine]);
-  if (menuMax) {
+  display.println(menuLines[menuLine].prompt);
+  if (getConfigBool(EEPROM_MENU_MAX)) {
     display.setTextSize(1);
     menuHeight = MENU_HEIGHT_SMALL;
   } else {
@@ -361,25 +498,13 @@ void updateScreenHid() {
     if (menuLine >= menuCount) {
       menuLine = 0;
     }
-    display.println(menuLines[menuLine]);
+    display.println(menuLines[menuLine].prompt);
   }
   display.display();
 }
 
-void sendKeys(String ch) {
-  int len = sizeof(ch) / sizeof(char);
-  for (int i = 0; i < len; i++) {
-    Keyboard.press(ch.charAt(i));
-    delay(10);
-    Keyboard.releaseAll();
-  }
-}
-
 void sendButtonPressed() {
-  logSubject("Sending...");
-  logLine(menuLines[tos], 100);
-  sendKeys(menuLines[tos]);
-  logLine("Done", 1000);
+  sendKeyData(tos);
   updateScreen = true;
 }
 
@@ -420,18 +545,18 @@ void reset() {
 }
 
 void rotateDisplay() {
-  if (screenRotation == ROTATE_LHS) {
-    screenRotation = ROTATE_RHS;
+  if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
+    setConfigUint(EEPROM_ROTATE, ROTATE_RHS);
   } else {
-    screenRotation = ROTATE_LHS;
+    setConfigUint(EEPROM_ROTATE, ROTATE_LHS);
   }
   setMode(MODE_HID);
 }
 
 void setLines() {
-  menuMax = !menuMax;
+  setConfigBool(EEPROM_MENU_MAX, !getConfigBool(EEPROM_MENU_MAX));
   logSubject("ZOOM:");
-  if (menuMax) {
+  if (getConfigBool(EEPROM_MENU_MAX)) {
     logLine("...8 Lines", 1000);
   } else {
     logLine("...4 Lines", 1000);
@@ -451,12 +576,6 @@ void errorCode(int c) {
   }
 }
 
-bool programButtons() {
-  if (digitalRead(IN_PIN_C) == LOW) {
-    screenRotation = ROTATE_RHS;
-  }
-  return (digitalRead(IN_PIN_A) == LOW) || (digitalRead(IN_PIN_C) == LOW);
-}
 
 void setup() {
   pinMode(IN_PIN_A, INPUT_PULLUP);
@@ -481,7 +600,7 @@ void setup() {
       delay(10);
       c--;
       if (c <= 0) {
-        logLine("Timeout", 10);
+        logError("Serial Timeout", 0);
         break;
       }
     }
@@ -491,7 +610,7 @@ void setup() {
     delay(1000);
     logLine("FS Init", 10);
     if (!FatFS.begin()) {
-      logLine("FS Fail", 10);
+      logError("FS Fail", 0);
     } else {
       logLine("FS OK", 10);
     }
@@ -506,12 +625,13 @@ void setup() {
     logLine("Program", 1000);
     setMode(MODE_PGM);
   } else {
-    loadKeyData();
+    loadConfigData();
     setMode(MODE_HID);
   }
   digitalWrite(LIVE_LED, HIGH);
   updateScreen = true;
   buttonBits = 0;
+  // waitForButton();
 }
 
 void loop() {
@@ -553,15 +673,8 @@ void loop() {
         }
         break;
       case MODE_PGM:
-        if ((buttonBits & BIT_2) == BIT_2) {
-          printDiag("IDENT");
-        } else {
-          if ((buttonBits & BIT_4) == BIT_4) {
-          } else {
-            if ((buttonBits & BIT_8) == BIT_8) {
-              reset();
-            }
-          }
+        if ((buttonBits & BIT_8) == BIT_8) {
+          reset();
         }
         break;
     }
