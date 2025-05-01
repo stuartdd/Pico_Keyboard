@@ -3,10 +3,22 @@
  * SSD1306 Display
  * Send Keys
  * RP2040 (pico)
-
+ *
  * Apache License Version 2.0, January 2004
  * Stuart Davies
  * https://github.com/stuartdd/Pico_Keyboard
+ * 
+ *
+ * Add to Preferences: Additional Board Manager URL:
+ * https://adafruit.github.io/arduino-board-index/package_adafruit_index.json
+ * https://github.com/earlephilhower/arduino-pico/releases/download/4.0.2/package_rp2040_index.json
+ *
+ *
+ * Add Library Adafruit_SSD1306 and the additional libraries it says it requires.
+ *
+ * Select Board: Raspberry Pi Pico.
+ * Set: Tools -> Flash Size -> to at least 1 meg to enable USB storage
+ *
  */
 #include <Keyboard.h>
 #include <Adafruit_GFX.h>
