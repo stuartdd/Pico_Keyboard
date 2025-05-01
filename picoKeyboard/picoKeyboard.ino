@@ -7,30 +7,34 @@
  * Apache License Version 2.0, January 2004
  * Stuart Davies
  * https://github.com/stuartdd/Pico_Keyboard
- *
  */
 #include <Keyboard.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Fonts/Picopixel.h>
 #include <FatFS.h>
 #include <FatFSUSB.h>
 
-#define MENU_FILE "menu.txt"
-#define EEPROM_FILE "eeprom.dat"
-#define EEPROM_LEN 10
-#define EEPROM_ROTATE 0
-#define EEPROM_MENU_MAX 1
-#define EEPROM_TRUE '1'
-#define EEPROM_FALSE '0'
+#include "config.h"
+#include "KeyboardLayout_en_UK.h"
+
+
+#define MENU_FILE "menu.txt"  // Namer of the menu file
 
 #define SCREEN_ADDRESS 0x3C  ///< See datasheet for Address; 0x3C
 #define SCREEN_WIDTH 128     // OLED display width, in pixels
 #define SCREEN_HEIGHT 64     // OLED display height, in pixels
-#define SCREEN_LINE 16
-#define SCREEN_CHAR 10
-#define LOG_LINES 6
-#define QUAD_W 4
-#define QUAD_H 6
+#define SCREEN_LINE 16       // Physical number of lines for button icon height
+#define SCREEN_CHAR 10       // Physical number of lines for button icon width
+#define QUAD_H 6             // Physical number of lines for button dot height
+#define QUAD_W 3             // Physical number of lines for button dot width
+#define LOG_LINES 4          // Number of non subject (heading) lines in the log display
+#define LINE_1_SMALL 24      // Using small font. This is Y offset to 1st Line
+#define LINE_1_LARGE 20      // Using large font. This is Y offset to 1st Line
+#define LINE_Y_SMALL 12      // Using small font. This is Y offset to 1st Line
+#define LINE_Y_LARGE 22      // Using large font. This is Y offset to 1st Line
+
+
 #define CHAR_MAXIMUM 127  // Ignore chars above 126
 #define CHAR_CR 10        // END OF LINE
 #define CHAR_SPACE 32     // SPACE
@@ -38,28 +42,28 @@
 
 #define LIVE_LED 22  // Actual Arduino pin number
 
-#define BIT_ALL 255
-#define BIT_NONE 0
+#define BIT_ALL 255  // Show ALL button icons
+#define BIT_NONE 0   // Show NO button icons
 
 #define IN_PIN_A 7  // Actual Arduino pin number
-#define BIT_1 1     // Bit position in buttonBits. Must be 1,2,4,8,16,,,
-#define QUAD_0 0    //
+#define BIT_1 1     // Bit position in button icon. Must be 1,2,4,8,16,,,
+#define QUAD_0 0    // Button Icon Top Left
 
 #define IN_PIN_B 8  // Actual Arduino pin number
-#define BIT_2 2     // Bit position in buttonBits. Must be 1,2,4,8,16,,,
-#define QUAD_1 1    //
+#define BIT_2 2     // Bit position in button icon. Must be 1,2,4,8,16,,,
+#define QUAD_1 1    // Button Icon Top right
 
 #define IN_PIN_C 14  // Actual Arduino pin number
-#define BIT_4 4      // Bit position in buttonBits. Must be 1,2,4,8,16,,,
-#define QUAD_2 2     //
+#define BIT_4 4      // Bit position in button icon. Must be 1,2,4,8,16,,,
+#define QUAD_2 2     // Button Icon Bottom left
 
 #define IN_PIN_D 6  // Actual Arduino pin number
-#define BIT_8 8     // Bit position in buttonBits. Must be 1,2,4,8,16,,,
-#define QUAD_3 3    //
+#define BIT_8 8     // Bit position in button icon. Must be 1,2,4,8,16,,,
+#define QUAD_3 3    // Button Icon Bottom right
 
 // Menu height is 1 + 3 for large display, 7 for small as yellow is always 2 lines
-#define MENU_HEIGHT_LARGE 4
-#define MENU_HEIGHT_SMALL 7
+#define MENU_HEIGHT_LARGE 3
+#define MENU_HEIGHT_SMALL 5
 #define MENU_LINES 10
 #define MENU_COLUMNS 10
 
@@ -67,86 +71,83 @@
 #define MODE_MENU 1
 #define MODE_HID 2
 #define MODE_PGM 3
+#define MODE_DIAG 4
 
 // Screen rotation for LHS and RHS plug in.
 #define ROTATE_LHS 0
 #define ROTATE_RHS 2
 
 
+int lineOneOffset = LINE_1_SMALL;
+int lineYOffset = LINE_Y_SMALL;
+
+int menuHeight = 0;                 // Default menu height
+int menuLine = 0;                   // Used while drawing the menu
+int displayMode = MODE_SETUP;       // Current operating mode
+int buttonBits = 0;                 // Bits to represent buttons LHS or RHS
+int tos = 0;                        // The menu item at the top of the screen
+int oldTos = 0;                     // The previous item at the top of screen
+volatile bool updateScreen = true;  // Screen needs to be redrawn
+
+String logSubjectStr = "";   // Log heading
+String logLines[LOG_LINES];  // Lines under heading (Circular buffer)
+int logLinePos = 0;          // Next position to wrire a log line
+int diagCounter = 0;
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire);
 
-int menuHeight = 0;  // Default menu height
-int menuLine = 0;
-int displayMode = MODE_SETUP;
-int buttonBits = 0;
-int tos = 0;
-int oldTos = 0;
-volatile bool updateScreen = true;  // Screen needs to be redrawn
-String logSubjectStr = "";
-String logLines[LOG_LINES] = { "", "", "", "", "", "" };
-int logLinePos = 0;
-char numberArray[20];
-uint8_t configFlags[EEPROM_LEN];
-bool eepromLoaded = false;
-
-
-uint8_t getConfigUint(int pos) {
-  return configFlags[pos] - 48;
+void initDisplayLarge() {
+  setFontSizeSmall(false);
+  display.setRotation(getConfigUint(CONFIG_ROTATE));
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.setTextColor(WHITE);
 }
 
-bool getConfigBool(int pos) {
-  return configFlags[pos] != EEPROM_FALSE;
-}
-
-void setConfigUint(int pos, uint8_t v) {
-  uint8_t vv = getConfigUint(pos);
-  if (v != vv) {
-    configFlags[pos] = v + 48;
-    writeEEpromData();
+void setFontSizeSmall(bool small) {
+  bool rotate = getConfigBool(CONFIG_ROTATE);
+  display.setTextSize(2);
+  if (small) {
+    lineOneOffset = LINE_1_SMALL;
+    lineYOffset = LINE_Y_SMALL;
+    menuHeight = MENU_HEIGHT_SMALL;
+    display.setFont(&Picopixel);
+  } else {
+    lineOneOffset = LINE_1_LARGE;
+    lineYOffset = LINE_Y_LARGE;
+    menuHeight = MENU_HEIGHT_LARGE;
+    display.setFont();
   }
 }
 
-void setConfigBool(int pos, bool v) {
-  bool vv = getConfigBool(pos);
-  if (v != vv) {
-    if (v) {
-      configFlags[pos] = EEPROM_TRUE;
-    } else {
-      configFlags[pos] = EEPROM_FALSE;
-    }
-    writeEEpromData();
-  }
-}
 
+// Data read from the menu file...
 struct menuData {
-  char prompt[MENU_COLUMNS + 1];
-  int offset;
-  int len;
-} menuLines[MENU_LINES];
-int menuCount = 0;
+  char prompt[MENU_COLUMNS + 1];  // The prompt (displayed) first N chars of the line. The +1 for 0 string terminator
+  int offset;                     // The offset in the file to the key data to be sent for the prompt.
+  int len;                        // The length of the prompt
+} menuLines[MENU_LINES];          // The menu data
+int menuCount = 0;                // Number of prompts found in the menu file.
 
-void printDiag(String s) {
-  if (Serial) {
-    Serial.println(s);
-  }
-}
 
+// Log a line and scroll the display while retaining the subject (header)
+// Delay after line is logged. So human can see it!
 void logLine(String s, int d) {
   logLines[logLinePos] = s;
-  display.clearDisplay();
-  display.setRotation(getConfigUint(EEPROM_ROTATE));
-  display.setCursor(0, 0);
-  display.setTextSize(2);
-  display.println(logSubjectStr);
-  display.setTextSize(1);
+  initDisplayLarge();
+  display.print(logSubjectStr);
+  setFontSizeSmall(true);
+  int lineY = lineOneOffset;
   int lp = logLinePos;
+  display.setCursor(0, lineY);
   for (int i = 0; i < LOG_LINES; i++) {
     lp++;
     if (lp >= LOG_LINES) {
       lp = 0;
     }
-    display.println(logLines[lp]);
+    display.print(logLines[lp]);
+    lineY = lineY + lineYOffset;
+    display.setCursor(0, lineY);
   }
   display.display();
   logLinePos++;
@@ -156,6 +157,7 @@ void logLine(String s, int d) {
   delay(d);
 }
 
+// Log a line and wait for a key press.
 void logError(String s, int d) {
   logLine(s, d + 1);
   if (d < 2) {
@@ -167,49 +169,16 @@ void logError(String s, int d) {
   }
 }
 
+// Log the subject (header) large. Clear the screen
 void logSubject(String s) {
   logSubjectStr = s;
   logLinePos = 0;
   for (int i = 0; i < LOG_LINES; i++) {
     logLines[i] = "";
   }
-  display.clearDisplay();
-  display.setRotation(getConfigUint(EEPROM_ROTATE));
-  display.setTextSize(2);
-  display.setCursor(0, 0);
+  initDisplayLarge();
   display.println(logSubjectStr);
   display.display();
-}
-
-
-void writeEEpromData() {
-  File f = FatFS.open(EEPROM_FILE, "w");
-  if (f) {
-    f.write(configFlags, EEPROM_LEN);
-    f.close();
-    logLine("EEPROM Created", 10);
-  } else {
-    logError("FAIL-OPEN W " + String(EEPROM_FILE), 1);
-  }
-}
-
-void readEEpromData() {
-  File f = FatFS.open(EEPROM_FILE, "r");
-  if (f) {
-    int pos = 0;
-    while (f.available()) {
-      configFlags[pos] = char(f.read());
-      pos++;
-      if (pos >= EEPROM_LEN) {
-        break;
-      }
-    }
-    f.close();
-    eepromLoaded = true;
-    logLine("EEPROM Loaded", 10);
-  } else {
-    logError("FAIL-OPEN R " + String(EEPROM_FILE), 1);
-  }
 }
 
 int readKeyFile(File f) {
@@ -223,12 +192,13 @@ int readKeyFile(File f) {
   int row = 0;
   int coll = 0;
   int char1 = 0;
-  int capture = 0;
+  bool delimFound = false;
   int count = 0;
   int offset = 0;
+
   while (f.available()) {
     char1 = f.read();
-    offset++;
+    offset++;  // Remember the offset for this char
     if (char1 == CHAR_CR) {
       if (menuLines[row].len > 0) {
         if (menuLines[row].offset == 0) {
@@ -242,24 +212,23 @@ int readKeyFile(File f) {
         return count;
       }
       coll = 0;
-      capture = 0;
+      delimFound = false;
     } else {
-      if (char1 == CHAR_DELIM) {
-        capture++;
+      if ((char1 == CHAR_DELIM) && (!delimFound)) {
+        delimFound = true;
         menuLines[row].offset = offset;
-      }
-      if ((capture == 0) || (capture == 2)) {
-        if ((char1 >= CHAR_SPACE) && (char1 < CHAR_MAXIMUM) && (coll < MENU_COLUMNS)) {
+      } else {
+        if ((char1 >= CHAR_SPACE) && (char1 < CHAR_MAXIMUM) && (coll < MENU_COLUMNS) && !delimFound) {
           menuLines[row].prompt[coll] = char1;
           menuLines[row].len++;
           coll++;
-          capture = 0;
         }
       }
     }
   }
   return count;
 }
+
 
 void sendKeyData(int tos) {
   int count = 0;
@@ -272,10 +241,7 @@ void sendKeyData(int tos) {
       while (f.available()) {
         int char1 = f.read();
         if (char1 != CHAR_CR) {
-          Keyboard.press(char1);
-          delay(10);
-          Keyboard.releaseAll();
-          count++;
+          count = count + sendKeyInt(char1);
         } else {
           break;
         }
@@ -288,7 +254,8 @@ void sendKeyData(int tos) {
   } else {
     logError("FS openFile FAIL", 1);
   }
-  stopIfButton();
+  waitForButton();
+  // stopIfButton();
 }
 
 void loadConfigData() {
@@ -301,7 +268,7 @@ void loadConfigData() {
     logError("FS FAIL", 1);
   }
 
-  for (int i = 0; i < EEPROM_LEN; i++) {
+  for (int i = 0; i < CONFIG_LEN; i++) {
     configFlags[i] = '0';
   }
 
@@ -311,9 +278,11 @@ void loadConfigData() {
       break;
     }
     if (dir.isFile()) {
-      if (dir.fileName() == EEPROM_FILE) {
-        logLine("READ " + dir.fileName(), 10);
-        readEEpromData();
+      if (dir.fileName() == CONFIG_FILE) {
+        if (!readConfigData()) {
+          logError("FAIL-OPEN R " + String(CONFIG_FILE), 1);
+        }
+        logLine("READ Config OK", 10);
       }
       if (dir.fileName() == MENU_FILE) {
         logLine("READ " + dir.fileName(), 10);
@@ -330,8 +299,8 @@ void loadConfigData() {
       }
     }
   }
-  if (!eepromLoaded) {
-    logLine("NO File " + String(EEPROM_FILE), 1);
+  if (!configLoaded) {
+    logLine("NO File " + String(CONFIG_FILE), 1);
   }
   if (menuCount == -1) {
     logError("NO File:" + String(MENU_FILE), 1);
@@ -375,28 +344,28 @@ bool programButtons() {
 bool scanButtons() {
   int bb = 0;
   if (digitalRead(IN_PIN_A) == LOW) {
-    if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
+    if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
       bb = bb | BIT_1;
     } else {
       bb = bb | BIT_4;
     }
   }
   if (digitalRead(IN_PIN_B) == LOW) {
-    if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
+    if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
       bb = bb | BIT_2;
     } else {
       bb = bb | BIT_8;
     }
   }
   if (digitalRead(IN_PIN_C) == LOW) {
-    if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
+    if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
       bb = bb | BIT_4;
     } else {
       bb = bb | BIT_1;
     }
   }
   if (digitalRead(IN_PIN_D) == LOW) {
-    if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
+    if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
       bb = bb | BIT_8;
     } else {
       bb = bb | BIT_2;
@@ -407,8 +376,13 @@ bool scanButtons() {
 }
 
 void box(int lin, int quad) {
-  display.drawRect(0, lin * SCREEN_LINE, SCREEN_CHAR, SCREEN_LINE, WHITE);
-  if (getConfigUint(EEPROM_ROTATE) == ROTATE_RHS) {  // Rotate the Quadrant
+  bool rotate = getConfigUint(CONFIG_ROTATE) == ROTATE_RHS;
+  int adjust = 0;
+  if (rotate) {
+    adjust = 1;
+  }
+  display.drawRect(0, lin * SCREEN_LINE + adjust, SCREEN_CHAR, SCREEN_LINE - 1, WHITE);
+  if (rotate) {  // Rotate the Quadrant
     switch (quad) {
       case QUAD_0:
         quad = QUAD_1;
@@ -429,24 +403,36 @@ void box(int lin, int quad) {
       display.fillRect(2, lin * SCREEN_LINE + 2, QUAD_W, QUAD_H, WHITE);
       break;
     case QUAD_1:
-      display.fillRect(QUAD_W, lin * SCREEN_LINE + 2, QUAD_W, QUAD_H, WHITE);
+      display.fillRect(QUAD_W + 2, lin * SCREEN_LINE + 2, QUAD_W, QUAD_H, WHITE);
       break;
     case QUAD_2:
       display.fillRect(2, lin * SCREEN_LINE + (QUAD_H + 2), QUAD_W, QUAD_H, WHITE);
       break;
     case QUAD_3:
-      display.fillRect(QUAD_W, lin * SCREEN_LINE + (QUAD_H + 2), QUAD_W, QUAD_H, WHITE);
+      display.fillRect(QUAD_W + 2, lin * SCREEN_LINE + (QUAD_H + 2), QUAD_W, QUAD_H, WHITE);
       break;
   }
 }
 
-void clearScreen(int showButtons) {
-  display.clearDisplay();
-  display.setRotation(getConfigUint(EEPROM_ROTATE));
-  display.setTextColor(SSD1306_WHITE);  // Draw white text
-  display.setTextWrap(false);
-  display.setCursor(0, 0);
-  display.setTextSize(2);
+void initSerial() {
+  int c = 500;
+  Serial.begin(9600);
+  while (!Serial) {
+    delay(10);
+    c--;
+    if (c <= 0) {
+      logError("Serial Timeout", 1);
+      break;
+    }
+  }
+  if (c > 0) {
+    logLine("Serial 9600", 10);
+  }
+  delay(1000);
+}
+
+void initScreenButtons(int showButtons) {
+  initDisplayLarge();
   if ((showButtons & BIT_1) == BIT_1) {
     box(0, QUAD_0);
   }
@@ -463,7 +449,7 @@ void clearScreen(int showButtons) {
 
 void updateScreenPgm() {
   updateScreen = false;
-  clearScreen(BIT_2);
+  initScreenButtons(BIT_2);
   display.println("Program:");
   display.println(" Reset");
   display.display();
@@ -471,34 +457,35 @@ void updateScreenPgm() {
 
 void updateScreenMenu() {
   updateScreen = false;
-  clearScreen(BIT_ALL);
+  initScreenButtons(BIT_ALL);
   display.println(" Reset");
   display.println(" Size");
   display.println(" Rotate");
-  display.println(" Back");
+  display.println(" Down/Up");
   display.display();
 }
 
 void updateScreenHid() {
   updateScreen = false;
-  clearScreen(BIT_NONE);
+  initDisplayLarge();
   menuLine = tos;
-  display.println(menuLines[menuLine].prompt);
-  if (getConfigBool(EEPROM_MENU_MAX)) {
-    display.setTextSize(1);
-    menuHeight = MENU_HEIGHT_SMALL;
-  } else {
-    menuHeight = MENU_HEIGHT_LARGE;
+  display.print(menuLines[menuLine].prompt);
+  if (getConfigBool(CONFIG_MENU_MAX)) {
+    setFontSizeSmall(true);
   }
   if (menuHeight > menuCount) {
     menuHeight = menuCount;
   }
+  int lineY = lineOneOffset;
+  display.setCursor(0, lineY);
   for (int i = 1; i < menuHeight; i++) {
     menuLine++;
     if (menuLine >= menuCount) {
       menuLine = 0;
     }
-    display.println(menuLines[menuLine].prompt);
+    display.print(menuLines[menuLine].prompt);
+    lineY = lineY + lineYOffset;
+    display.setCursor(0, lineY);
   }
   display.display();
 }
@@ -516,25 +503,33 @@ void setMode(int newMode) {
   updateScreen = true;
 }
 
-void upButtonPressed() {
-  oldTos = tos;
-  tos++;
-  if (tos >= menuCount) {
-    tos = 0;
-  }
-  if (oldTos != tos) {
-    updateScreen = true;
+void upButtonPressed(bool swap) {
+  if (swap) {
+    downButtonPressed(false);
+  } else {
+    oldTos = tos;
+    tos++;
+    if (tos >= menuCount) {
+      tos = 0;
+    }
+    if (oldTos != tos) {
+      updateScreen = true;
+    }
   }
 }
 
-void downButtonPressed() {
-  oldTos = tos;
-  tos--;
-  if (tos < 0) {
-    tos = menuCount - 1;
-  }
-  if (oldTos != tos) {
-    updateScreen = true;
+void downButtonPressed(bool swap) {
+  if (swap) {
+    upButtonPressed(false);
+  } else {
+    oldTos = tos;
+    tos--;
+    if (tos < 0) {
+      tos = menuCount - 1;
+    }
+    if (oldTos != tos) {
+      updateScreen = true;
+    }
   }
 }
 
@@ -544,19 +539,26 @@ void reset() {
   rp2040.reboot();
 }
 
+void swapDownUp() {
+  flipConfigBool(CONFIG_DOWN_UP);
+  logSubject("SWAP:\nDown & Up");
+  delay(1000);
+  setMode(MODE_HID);
+}
+
 void rotateDisplay() {
-  if (getConfigUint(EEPROM_ROTATE) == ROTATE_LHS) {
-    setConfigUint(EEPROM_ROTATE, ROTATE_RHS);
+  if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
+    setConfigUint(CONFIG_ROTATE, ROTATE_RHS);
   } else {
-    setConfigUint(EEPROM_ROTATE, ROTATE_LHS);
+    setConfigUint(CONFIG_ROTATE, ROTATE_LHS);
   }
   setMode(MODE_HID);
 }
 
 void setLines() {
-  setConfigBool(EEPROM_MENU_MAX, !getConfigBool(EEPROM_MENU_MAX));
+  flipConfigBool(CONFIG_MENU_MAX);
   logSubject("ZOOM:");
-  if (getConfigBool(EEPROM_MENU_MAX)) {
+  if (getConfigBool(CONFIG_MENU_MAX)) {
     logLine("...8 Lines", 1000);
   } else {
     logLine("...4 Lines", 1000);
@@ -588,26 +590,11 @@ void setup() {
     errorCode(4);
   }
   // Clear the buffer
-  clearScreen(BIT_NONE);
+  initDisplayLarge();
   logSubject("Setup:");
   digitalWrite(LIVE_LED, HIGH);
   if (programButtons()) {
     digitalWrite(LIVE_LED, LOW);
-    logLine("Serial?", 10);
-    int c = 100;
-    Serial.begin(9600);
-    while (!Serial) {
-      delay(10);
-      c--;
-      if (c <= 0) {
-        logError("Serial Timeout", 0);
-        break;
-      }
-    }
-    if (c > 0) {
-      logLine("Serial OK", 10);
-    }
-    delay(1000);
     logLine("FS Init", 10);
     if (!FatFS.begin()) {
       logError("FS Fail", 0);
@@ -625,9 +612,17 @@ void setup() {
     logLine("Program", 1000);
     setMode(MODE_PGM);
   } else {
+    Keyboard.begin(KeyboardLayout_en_UK);
     loadConfigData();
-    setMode(MODE_HID);
+    if (getConfigBool(CONFIG_DIAG)) {
+      initSerial();
+      setMode(MODE_DIAG);
+      logSubject("Diag:");
+    } else {
+      setMode(MODE_HID);
+    }
   }
+  display.setRotation(getConfigUint(CONFIG_ROTATE));
   digitalWrite(LIVE_LED, HIGH);
   updateScreen = true;
   buttonBits = 0;
@@ -635,66 +630,75 @@ void setup() {
 }
 
 void loop() {
-  if (scanButtons()) {
-    digitalWrite(LIVE_LED, LOW);
-    switch (displayMode) {
-      case MODE_HID:
-        if ((buttonBits & BIT_1) == BIT_1) {
-          sendButtonPressed();
-        } else {
-          if ((buttonBits & BIT_2) == BIT_2) {
-            upButtonPressed();
+  if (displayMode == MODE_DIAG) {
+    if (diagCounter < 128) {
+      Serial.print(String(itoa(diagCounter, numberArray, 10)));
+      Serial.print(": ");
+      Serial.println(String(itoa(int(KeyboardLayout_en_UK[diagCounter]), numberArray, 16)));
+      diagCounter++;
+    } 
+  } else {
+    if (scanButtons()) {
+      digitalWrite(LIVE_LED, LOW);
+      switch (displayMode) {
+        case MODE_HID:
+          if ((buttonBits & BIT_1) == BIT_1) {
+            sendButtonPressed();
           } else {
-            if ((buttonBits & BIT_4) == BIT_4) {
-              setMode(MODE_MENU);
+            if ((buttonBits & BIT_2) == BIT_2) {
+              upButtonPressed(getConfigBool(CONFIG_DOWN_UP));
             } else {
-              if ((buttonBits & BIT_8) == BIT_8) {
-                downButtonPressed();
+              if ((buttonBits & BIT_4) == BIT_4) {
+                setMode(MODE_MENU);
+              } else {
+                if ((buttonBits & BIT_8) == BIT_8) {
+                  downButtonPressed(getConfigBool(CONFIG_DOWN_UP));
+                }
               }
             }
           }
-        }
-        break;
-      case MODE_MENU:
-        if ((buttonBits & BIT_1) == BIT_1) {
-          reset();
-        } else {
-          if ((buttonBits & BIT_2) == BIT_2) {
-            setLines();
+          break;
+        case MODE_MENU:
+          if ((buttonBits & BIT_1) == BIT_1) {
+            reset();
           } else {
-            if ((buttonBits & BIT_4) == BIT_4) {
-              rotateDisplay();
+            if ((buttonBits & BIT_2) == BIT_2) {
+              setLines();
             } else {
-              if ((buttonBits & BIT_8) == BIT_8) {
-                setMode(MODE_HID);
+              if ((buttonBits & BIT_4) == BIT_4) {
+                rotateDisplay();
+              } else {
+                if ((buttonBits & BIT_8) == BIT_8) {
+                  swapDownUp();
+                }
               }
             }
           }
-        }
-        break;
-      case MODE_PGM:
-        if ((buttonBits & BIT_8) == BIT_8) {
-          reset();
-        }
-        break;
+          break;
+        case MODE_PGM:
+          if ((buttonBits & BIT_8) == BIT_8) {
+            reset();
+          }
+          break;
+      }
+      digitalWrite(LIVE_LED, HIGH);
     }
-    digitalWrite(LIVE_LED, HIGH);
-  }
 
-  if (updateScreen) {
-    switch (displayMode) {
-      case MODE_PGM:
-        updateScreenPgm();
-        break;
-      case MODE_HID:
-        updateScreenHid();
-        break;
-      case MODE_MENU:
-        updateScreenMenu();
-        break;
+    if (updateScreen) {
+      switch (displayMode) {
+        case MODE_PGM:
+          updateScreenPgm();
+          break;
+        case MODE_HID:
+          updateScreenHid();
+          break;
+        case MODE_MENU:
+          updateScreenMenu();
+          break;
+      }
     }
   }
-
+  
   while (scanButtons()) {
     delay(100);
   }
