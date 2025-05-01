@@ -1,4 +1,10 @@
 #include "Keyboard.h"
+
+/*
+https://adafruit.github.io/arduino-board-index/package_adafruit_index.json
+https://github.com/earlephilhower/arduino-pico/releases/download/4.0.2/package_rp2040_index.json
+*/
+
 /*
 Dec  Char                           Dec  Char     Dec  Char     Dec  Char
 ---------                           ---------     ---------     ----------
