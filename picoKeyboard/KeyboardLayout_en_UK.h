@@ -66,7 +66,10 @@ Dec  Char                           Dec  Char     Dec  Char     Dec  Char
 #define ISO_KEY 0x64
 #define ISO_REPLACEMENT 0x32
 #define ESCAPE_CHAR 92
-#define GAP_MS_DEFAULT 5
+#define NEWLINE_CHAR 10
+#define TAB_CHAR 9
+
+#define GAP_MS_DEFAULT 50
 #define PRESS_RELEASE_MS 5
 
 void logLine(String s, int i);
@@ -207,6 +210,10 @@ bool escaping = false;
 int gapMs = GAP_MS_DEFAULT;
 char numberArray[20];  // Use for number to string conversion
 
+void setGap(char c) {
+  gapMs = ((c - '0') * GAP_MS_DEFAULT) + PRESS_RELEASE_MS;
+}
+
 void sendNumber(int i, bool hex) {
   if (i == 32) {
     return;
@@ -232,12 +239,18 @@ void sendNumber(int i, bool hex) {
 // | a # £ \ @ " ~ ¬ ` ! $ % ^ & * ( ) - = _ + [ ] { } ' ; : , . / < > ?
 // | a # £ \ @ " ~ ¬ ` ! $ % ^ & * ( ) - = _ + [ ] { } ' ; : , . / < > ?"
 //
+// 0 abc12 
+// 5 abc123 
+// 9 abc123 
+//Fin
 //
 int pressKeyInt(int key) {
   Keyboard.press(key);
   delay(PRESS_RELEASE_MS);
   Keyboard.release(key);
-  delay(gapMs - PRESS_RELEASE_MS);
+  if (gapMs > PRESS_RELEASE_MS) {
+    delay(gapMs - PRESS_RELEASE_MS);
+  }
   return 1;
 }
 
@@ -246,16 +259,21 @@ int sendKeyInt(int key) {
   if (escaping) {
     escaping = false;
     if ((key >= '0') && (key <= '9')) {
-      gapMs = ((key - '0') * GAP_MS_DEFAULT) + PRESS_RELEASE_MS;
-      logLine(String(itoa(gapMs, numberArray, 10)), 10);
+      setGap(key);
       return count;
     }
     switch (key) {
+      case 'p':
+        delay(1000);
+        return 0;
+      case 'P':
+        delay(5000);
+        return 0;
       case 'n':
-        key = 10;
+        key = NEWLINE_CHAR;
         break;
       case 't':
-        key = 9;
+        key = TAB_CHAR;
         break;
       case 'b':
         key = 8;

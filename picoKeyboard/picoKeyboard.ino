@@ -249,6 +249,7 @@ void sendKeyData(int tos) {
   File f = FatFS.open(MENU_FILE, "r");
   if (f) {
     logLine("Sending item: " + String(menuLines[tos].prompt), 10);
+    setGap('0');
     if (f.seek(offset)) {
       while (f.available()) {
         int char1 = f.read();
@@ -266,8 +267,8 @@ void sendKeyData(int tos) {
   } else {
     logError("FS openFile FAIL", 1);
   }
-  waitForButton();
-  // stopIfButton();
+  // waitForButton();
+  stopIfButton();
 }
 
 void loadConfigData() {
