@@ -57,21 +57,21 @@
 #define BIT_ALL 255  // Show ALL button icons
 #define BIT_NONE 0   // Show NO button icons
 
-#define IN_PIN_A 7  // Actual Arduino pin number
-#define BIT_1 1     // Bit position in button icon. Must be 1,2,4,8,16,,,
-#define QUAD_0 0    // Button Icon Top Left
+#define IN_PIN_A 7   // Actual Arduino pin number
+#define BIT_PIN_A 1  // Bit position in button icon. Must be 1,2,4,8,16,,,
+#define QUAD_0 0     // Button Icon Top Left
 
-#define IN_PIN_B 8  // Actual Arduino pin number
-#define BIT_2 2     // Bit position in button icon. Must be 1,2,4,8,16,,,
-#define QUAD_1 1    // Button Icon Top right
+#define IN_PIN_B 8   // Actual Arduino pin number
+#define BIT_PIN_B 2  // Bit position in button icon. Must be 1,2,4,8,16,,,
+#define QUAD_1 1     // Button Icon Top right
 
 #define IN_PIN_C 14  // Actual Arduino pin number
-#define BIT_4 4      // Bit position in button icon. Must be 1,2,4,8,16,,,
+#define BIT_PIN_C 4  // Bit position in button icon. Must be 1,2,4,8,16,,,
 #define QUAD_2 2     // Button Icon Bottom left
 
-#define IN_PIN_D 6  // Actual Arduino pin number
-#define BIT_8 8     // Bit position in button icon. Must be 1,2,4,8,16,,,
-#define QUAD_3 3    // Button Icon Bottom right
+#define IN_PIN_D 6   // Actual Arduino pin number
+#define BIT_PIN_D 8  // Bit position in button icon. Must be 1,2,4,8,16,,,
+#define QUAD_3 3     // Button Icon Bottom right
 
 // Menu height is 1 + 3 for large display, 7 for small as yellow is always 2 lines
 #define MENU_HEIGHT_LARGE 3
@@ -357,30 +357,30 @@ bool scanButtons() {
   int bb = 0;
   if (digitalRead(IN_PIN_A) == LOW) {
     if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
-      bb = bb | BIT_1;
+      bb = bb | BIT_PIN_A;
     } else {
-      bb = bb | BIT_4;
+      bb = bb | BIT_PIN_C;
     }
   }
   if (digitalRead(IN_PIN_B) == LOW) {
     if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
-      bb = bb | BIT_2;
+      bb = bb | BIT_PIN_B;
     } else {
-      bb = bb | BIT_8;
+      bb = bb | BIT_PIN_D;
     }
   }
   if (digitalRead(IN_PIN_C) == LOW) {
     if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
-      bb = bb | BIT_4;
+      bb = bb | BIT_PIN_C;
     } else {
-      bb = bb | BIT_1;
+      bb = bb | BIT_PIN_A;
     }
   }
   if (digitalRead(IN_PIN_D) == LOW) {
     if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
-      bb = bb | BIT_8;
+      bb = bb | BIT_PIN_D;
     } else {
-      bb = bb | BIT_2;
+      bb = bb | BIT_PIN_B;
     }
   }
   buttonBits = bb;
@@ -445,23 +445,23 @@ void initSerial() {
 
 void initScreenButtons(int showButtons) {
   initDisplayLarge();
-  if ((showButtons & BIT_1) == BIT_1) {
+  if ((showButtons & BIT_PIN_A) == BIT_PIN_A) {
     box(0, QUAD_0);
   }
-  if ((showButtons & BIT_2) == BIT_2) {
+  if ((showButtons & BIT_PIN_B) == BIT_PIN_B) {
     box(1, QUAD_1);
   }
-  if ((showButtons & BIT_4) == BIT_4) {
+  if ((showButtons & BIT_PIN_C) == BIT_PIN_C) {
     box(2, QUAD_2);
   }
-  if ((showButtons & BIT_8) == BIT_8) {
+  if ((showButtons & BIT_PIN_D) == BIT_PIN_D) {
     box(3, QUAD_3);
   }
 }
 
 void updateScreenPgm() {
   updateScreen = false;
-  initScreenButtons(BIT_2);
+  initScreenButtons(BIT_PIN_B);
   display.println("Program:");
   display.println(" Reset");
   display.display();
@@ -590,6 +590,45 @@ void errorCode(int c) {
   }
 }
 
+bool passCodeKey(String s, int bits, bool wait) {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println(s);
+  display.display();
+  buttonBits = 0;
+  while (!scanButtons()) {
+    delay(10);
+  }
+  int bb = buttonBits;
+  if (wait) {
+    while (scanButtons()) {
+      delay(10);
+    }
+  }
+  if (bb == bits) {
+    return true;
+  }
+  return false;
+}
+
+void passCode() {
+  bool a = false;
+  bool b = false;
+  bool c = false;
+  bool d = false;
+  do {
+    a = passCodeKey("?", BIT_PIN_A, true);
+    b = passCodeKey(".", BIT_PIN_B, true);
+    c = passCodeKey("..", BIT_PIN_C, true);
+    d = passCodeKey("...", BIT_PIN_D, true);
+    passCodeKey("....", 0, false);
+    if (a && b && c && d) {
+      return;
+    }
+    delay(10000);
+  } while (true);
+  
+}
 
 void setup() {
   pinMode(IN_PIN_A, INPUT_PULLUP);
@@ -603,6 +642,7 @@ void setup() {
   }
   // Clear the buffer
   initDisplayLarge();
+  passCode();
   logSubject("Setup:");
   digitalWrite(LIVE_LED, HIGH);
   if (programButtons()) {
@@ -654,16 +694,16 @@ void loop() {
       digitalWrite(LIVE_LED, LOW);
       switch (displayMode) {
         case MODE_HID:
-          if ((buttonBits & BIT_1) == BIT_1) {
+          if ((buttonBits & BIT_PIN_A) == BIT_PIN_A) {
             sendButtonPressed();
           } else {
-            if ((buttonBits & BIT_2) == BIT_2) {
+            if ((buttonBits & BIT_PIN_B) == BIT_PIN_B) {
               upButtonPressed(getConfigBool(CONFIG_DOWN_UP));
             } else {
-              if ((buttonBits & BIT_4) == BIT_4) {
+              if ((buttonBits & BIT_PIN_C) == BIT_PIN_C) {
                 setMode(MODE_MENU);
               } else {
-                if ((buttonBits & BIT_8) == BIT_8) {
+                if ((buttonBits & BIT_PIN_D) == BIT_PIN_D) {
                   downButtonPressed(getConfigBool(CONFIG_DOWN_UP));
                 }
               }
@@ -671,16 +711,16 @@ void loop() {
           }
           break;
         case MODE_MENU:
-          if ((buttonBits & BIT_1) == BIT_1) {
+          if ((buttonBits & BIT_PIN_A) == BIT_PIN_A) {
             reset();
           } else {
-            if ((buttonBits & BIT_2) == BIT_2) {
+            if ((buttonBits & BIT_PIN_B) == BIT_PIN_B) {
               setLines();
             } else {
-              if ((buttonBits & BIT_4) == BIT_4) {
+              if ((buttonBits & BIT_PIN_C) == BIT_PIN_C) {
                 rotateDisplay();
               } else {
-                if ((buttonBits & BIT_8) == BIT_8) {
+                if ((buttonBits & BIT_PIN_D) == BIT_PIN_D) {
                   swapDownUp();
                 }
               }
@@ -688,7 +728,7 @@ void loop() {
           }
           break;
         case MODE_PGM:
-          if ((buttonBits & BIT_8) == BIT_8) {
+          if ((buttonBits & BIT_PIN_D) == BIT_PIN_D) {
             reset();
           }
           break;
