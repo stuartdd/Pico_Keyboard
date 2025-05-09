@@ -590,22 +590,51 @@ void errorCode(int c) {
   }
 }
 
-bool passCodeKey(String s, int bits, bool wait) {
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.println(s);
-  display.display();
+int pcx = 0;
+int pcxi = 1;
+int pcxim = 115;
+int pcy = 0;
+int pcyi = 1;
+int pcyim = 49;
+bool passCodeKey(String s, int bits, bool wait, unsigned long lo, unsigned long hi) {
   buttonBits = 0;
   while (!scanButtons()) {
+    display.clearDisplay();
+    display.setCursor(pcx, pcy);
+    display.print(s);
+    display.display();
+    pcx = pcx + pcxi;
+    if (pcx > pcxim) {
+      pcxi = -1;
+    } else {
+      if (pcx < 0) {
+        pcxi = 1;
+      }
+    }
+
+    pcy = pcy + pcyi;
+    if (pcy > pcyim) {
+      pcyi = -1;
+    } else {
+      if (pcy < 0) {
+        pcyi = 1;
+      }
+    }
     delay(10);
   }
+  unsigned long m1 = millis();
   int bb = buttonBits;
   if (wait) {
     while (scanButtons()) {
       delay(10);
     }
   }
-  if (bb == bits) {
+  unsigned long m2 = millis() - m1;
+  display.setCursor(0, 0);
+  display.print(String(itoa(m2, numberArray, 10)));
+  display.display();
+  delay(100);
+  if ((bb == bits) && (m2 > lo) && (m2 < hi)) {
     return true;
   }
   return false;
@@ -617,17 +646,20 @@ void passCode() {
   bool c = false;
   bool d = false;
   do {
-    a = passCodeKey("?", BIT_PIN_A, true);
-    b = passCodeKey(".", BIT_PIN_B, true);
-    c = passCodeKey("..", BIT_PIN_C, true);
-    d = passCodeKey("...", BIT_PIN_D, true);
-    passCodeKey("....", 0, false);
+    a = passCodeKey("?", BIT_PIN_A, true, 100, 250);
+    b = passCodeKey("1", BIT_PIN_B, true, 1000, 3000);
+    c = passCodeKey("2", BIT_PIN_C, true, 1000, 3000);
+    d = passCodeKey("3", BIT_PIN_D, true, 100, 250);
+    passCodeKey("4", 0, false, 100, 500);
     if (a && b && c && d) {
       return;
     }
-    delay(10000);
+    display.clearDisplay();
+    display.display();
+    digitalWrite(LIVE_LED, HIGH);
+    delay(6000);
+    rp2040.reboot();
   } while (true);
-  
 }
 
 void setup() {
