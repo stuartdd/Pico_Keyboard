@@ -76,7 +76,7 @@
 // Menu height is 1 + 3 for large display, 7 for small as yellow is always 2 lines
 #define MENU_HEIGHT_LARGE 3
 #define MENU_HEIGHT_SMALL 5
-#define MENU_LINES 10
+#define MENU_LINES_MAX 15
 #define MENU_COLUMNS 10
 
 #define MODE_SETUP 0
@@ -95,6 +95,7 @@ int lineYOffset = LINE_Y_SMALL;
 
 int menuHeight = 0;                 // Default menu height
 int menuLine = 0;                   // Used while drawing the menu
+int menuCount = 0;                  // Number of prompts found in the menu file.
 int displayMode = MODE_SETUP;       // Current operating mode
 int buttonBits = 0;                 // Bits to represent buttons LHS or RHS
 int tos = 0;                        // The menu item at the top of the screen
@@ -138,9 +139,7 @@ struct menuData {
   char prompt[MENU_COLUMNS + 1];  // The prompt (displayed) first N chars of the line. The +1 for 0 string terminator
   int offset;                     // The offset in the file to the key data to be sent for the prompt.
   int len;                        // The length of the prompt
-} menuLines[MENU_LINES];          // The menu data
-int menuCount = 0;                // Number of prompts found in the menu file.
-
+} menuLines[MENU_LINES_MAX];      // The menu data
 
 // Log a line and scroll the display while retaining the subject (header)
 // Delay after line is logged. So human can see it!
@@ -194,7 +193,7 @@ void logSubject(String s) {
 }
 
 int readKeyFile(File f) {
-  for (int x = 0; x < MENU_LINES; x++) {
+  for (int x = 0; x < MENU_LINES_MAX; x++) {
     for (int y = 0; y < (MENU_COLUMNS + 1); y++) {
       menuLines[x].prompt[y] = 0;
       menuLines[x].offset = 0;
@@ -220,7 +219,7 @@ int readKeyFile(File f) {
         count++;
       }
       row++;
-      if (row >= MENU_LINES) {
+      if (row >= MENU_LINES_MAX) {
         return count;
       }
       coll = 0;
@@ -649,7 +648,7 @@ void loop() {
       Serial.print(": ");
       Serial.println(String(itoa(int(KeyboardLayout_en_UK[diagCounter]), numberArray, 16)));
       diagCounter++;
-    } 
+    }
   } else {
     if (scanButtons()) {
       digitalWrite(LIVE_LED, LOW);
@@ -711,7 +710,7 @@ void loop() {
       }
     }
   }
-  
+
   while (scanButtons()) {
     delay(100);
   }
