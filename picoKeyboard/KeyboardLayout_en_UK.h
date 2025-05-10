@@ -58,8 +58,8 @@ Dec  Char                           Dec  Char     Dec  Char     Dec  Char
       |Ctrl|Win |Alt |                        |AlGr|Win |Menu|Ctrl|
       +----+----+----+------------------------+----+----+----+----+
 
-| a # £ \ @ " ~ ¬ ` ! $ % ^ & * ( ) - = _ + [ ] { } ' ; : , . / < > ?
-
+git add .
+git commit -m ""
 */
 #define SHIFT 0x80
 #define ALT_GR 0xc0
@@ -69,10 +69,13 @@ Dec  Char                           Dec  Char     Dec  Char     Dec  Char
 #define NEWLINE_CHAR 10
 #define TAB_CHAR 9
 
-#define GAP_MS_DEFAULT 50
+#define GAP_MS_DEFAULT 10
 #define PRESS_RELEASE_MS 5
 
 void logLine(String s, int i);
+void setSelected(int sel, bool wrap);
+void waitForButton(String m);
+void pushSend(int ms);
 
 extern const uint8_t KeyboardLayout_en_UK[128] PROGMEM = {
   0x20 | SHIFT,  // NUL Remap 00 to 0x20 | SHIFT for £ (dec 163)
@@ -207,12 +210,7 @@ extern const uint8_t KeyboardLayout_en_UK[128] PROGMEM = {
 };
 
 bool escaping = false;
-int gapMs = GAP_MS_DEFAULT;
 char numberArray[20];  // Use for number to string conversion
-
-void setGap(char c) {
-  gapMs = ((c - '0') * GAP_MS_DEFAULT) + PRESS_RELEASE_MS;
-}
 
 void sendNumber(int i, bool hex) {
   if (i == 32) {
@@ -235,22 +233,11 @@ void sendNumber(int i, bool hex) {
   Keyboard.write(']');
 }
 
-// | \\ \a \n// ...
-// | a # £ \ @ " ~ ¬ ` ! $ % ^ & * ( ) - = _ + [ ] { } ' ; : , . / < > ?
-// | a # £ \ @ " ~ ¬ ` ! $ % ^ & * ( ) - = _ + [ ] { } ' ; : , . / < > ?"
-//
-// 0 abc12 
-// 5 abc123 
-// 9 abc123 
-//Fin
-//
 int pressKeyInt(int key) {
   Keyboard.press(key);
   delay(PRESS_RELEASE_MS);
   Keyboard.release(key);
-  if (gapMs > PRESS_RELEASE_MS) {
-    delay(gapMs - PRESS_RELEASE_MS);
-  }
+  delay(GAP_MS_DEFAULT);
   return 1;
 }
 
@@ -259,10 +246,14 @@ int sendKeyInt(int key) {
   if (escaping) {
     escaping = false;
     if ((key >= '0') && (key <= '9')) {
-      setGap(key);
+      setSelected(key - '0', false);
+      pushSend(20);
       return count;
     }
     switch (key) {
+      case 'w':
+        waitForButton("Waiting:");
+        return 0;
       case 'p':
         delay(1000);
         return 0;

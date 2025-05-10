@@ -98,16 +98,20 @@ int menuLine = 0;                   // Used while drawing the menu
 int menuCount = 0;                  // Number of prompts found in the menu file.
 int displayMode = MODE_SETUP;       // Current operating mode
 int buttonBits = 0;                 // Bits to represent buttons LHS or RHS
-int tos = 0;                        // The menu item at the top of the screen
-int oldTos = 0;                     // The previous item at the top of screen
+int tos = 0;                        // The menu item at the top of the screen                   // The previous item at the top of screen
 volatile bool updateScreen = true;  // Screen needs to be redrawn
 
 String logSubjectStr = "";   // Log heading
 String logLines[LOG_LINES];  // Lines under heading (Circular buffer)
 int logLinePos = 0;          // Next position to wrire a log line
 int diagCounter = 0;
+int pushSendDelay = 0;
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire);
+
+void pushSend(int delay) {
+  pushSendDelay = delay;
+}
 
 void initDisplayLarge() {
   setFontSizeSmall(false);
@@ -172,7 +176,7 @@ void logLine(String s, int d) {
 void logError(String s, int d) {
   logLine(s, d + 1);
   if (d < 2) {
-    waitForButton();
+    waitForButton("");
     if (d == 1) {
       logLine("Reboot:", 1000);
       rp2040.reboot();
@@ -247,8 +251,7 @@ void sendKeyData(int tos) {
   int offset = menuLines[tos].offset;
   File f = FatFS.open(MENU_FILE, "r");
   if (f) {
-    logLine("Sending item: " + String(menuLines[tos].prompt), 10);
-    setGap('0');
+    logLine("--> " + String(menuLines[tos].prompt), 10);
     if (f.seek(offset)) {
       while (f.available()) {
         int char1 = f.read();
@@ -335,8 +338,12 @@ bool mountable(uint32_t i) {
   return true;
 }
 
-void waitForButton() {
-  logLine("Press B or D..", 1);
+void waitForButton(String m) {
+  if (m == "") {
+    logLine("Press B or D..", 1);
+  } else {
+    logLine(m, 1);
+  }
   while ((digitalRead(IN_PIN_B) == HIGH) && (digitalRead(IN_PIN_D) == HIGH)) {
     delay(10);
   }
@@ -354,6 +361,15 @@ bool programButtons() {
 }
 
 bool scanButtons() {
+  if (pushSendDelay > 1) {
+    pushSendDelay--;
+    return false;
+  }
+  if (pushSendDelay == 1) {
+    pushSendDelay = 0;
+    buttonBits = BIT_PIN_A;
+    return true;
+  }
   int bb = 0;
   if (digitalRead(IN_PIN_A) == LOW) {
     if (getConfigUint(CONFIG_ROTATE) == ROTATE_LHS) {
@@ -515,18 +531,32 @@ void setMode(int newMode) {
   updateScreen = true;
 }
 
+void setSelected(int sel, bool wrap) {
+  if (sel < 0) {
+    if (wrap) {
+      sel = (menuCount - 1);
+    } else {
+      sel = 0;
+    }
+  }
+  if (sel >= menuCount) {
+    if (wrap) {
+      sel = 0;
+    } else {
+      sel = (menuCount - 1);
+    }
+  }
+  if (sel != tos) {
+    tos = sel;
+    updateScreen = true;
+  }
+}
+
 void upButtonPressed(bool swap) {
   if (swap) {
     downButtonPressed(false);
   } else {
-    oldTos = tos;
-    tos++;
-    if (tos >= menuCount) {
-      tos = 0;
-    }
-    if (oldTos != tos) {
-      updateScreen = true;
-    }
+    setSelected(tos + 1, true);
   }
 }
 
@@ -534,14 +564,7 @@ void downButtonPressed(bool swap) {
   if (swap) {
     upButtonPressed(false);
   } else {
-    oldTos = tos;
-    tos--;
-    if (tos < 0) {
-      tos = menuCount - 1;
-    }
-    if (oldTos != tos) {
-      updateScreen = true;
-    }
+    setSelected(tos - 1, true);
   }
 }
 
@@ -674,7 +697,7 @@ void setup() {
   }
   // Clear the buffer
   initDisplayLarge();
-  passCode();
+  //passCode();
   logSubject("Setup:");
   digitalWrite(LIVE_LED, HIGH);
   if (programButtons()) {
