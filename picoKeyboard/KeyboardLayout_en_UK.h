@@ -1,3 +1,4 @@
+#include "HID_Keyboard.h"
 #include "Keyboard.h"
 
 /*
@@ -73,8 +74,10 @@ git commit -m ""
 #define PRESS_RELEASE_MS 5
 
 void logLine(String s, int i);
+void logSubject(String s);
 void setSelected(int sel, bool wrap);
 void waitForButton(String m);
+bool altButtons();
 void pushSend(int ms);
 
 extern const uint8_t KeyboardLayout_en_UK[128] PROGMEM = {
@@ -210,7 +213,7 @@ extern const uint8_t KeyboardLayout_en_UK[128] PROGMEM = {
 };
 
 bool escaping = false;
-char numberArray[20];  // Use for number to string conversion
+char numberString[20];  // Use for number to string conversion
 
 void sendNumber(int i, bool hex) {
   if (i == 32) {
@@ -218,17 +221,17 @@ void sendNumber(int i, bool hex) {
   }
   Keyboard.write('[');
   if (hex) {
-    itoa(i, numberArray, 16);
+    itoa(i, numberString, 16);
     Keyboard.write('0');
     Keyboard.write('x');
   } else {
-    itoa(i, numberArray, 10);
+    itoa(i, numberString, 10);
   }
   for (int xx = 0; xx < 4; xx++) {
-    if (numberArray[xx] == 0) {
+    if (numberString[xx] == 0) {
       break;
     }
-    Keyboard.write(numberArray[xx]);
+    Keyboard.write(numberString[xx]);
   }
   Keyboard.write(']');
 }
@@ -239,6 +242,26 @@ int pressKeyInt(int key) {
   Keyboard.release(key);
   delay(GAP_MS_DEFAULT);
   return 1;
+}
+
+String aliveS1 = "Ping: ";
+int keepAlive() {
+  int gap = 0;
+  int count = 1;
+  logSubject("KeepAlive");
+  while (!altButtons()) {
+    gap--;
+    if (gap < 0) {
+      gap = 1000;
+      Keyboard.press(KEY_LEFT_SHIFT);
+      delay(PRESS_RELEASE_MS);
+      Keyboard.release(KEY_LEFT_SHIFT);
+      logLine(aliveS1 + count, 10);
+      count++;
+    }
+    delay(10);
+  }
+  return count-1;
 }
 
 int sendKeyInt(int key) {
@@ -254,6 +277,8 @@ int sendKeyInt(int key) {
       case 'w':
         waitForButton("Waiting:");
         return 0;
+      case 'k':
+        return keepAlive();
       case 'p':
         delay(1000);
         return 0;
