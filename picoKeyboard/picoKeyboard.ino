@@ -218,7 +218,7 @@ int readKeyFile(File f) {
       if (menuLines[row].len > 0) {
         if (menuLines[row].offset == 0) {
           logLine("Menu: " + String(menuLines[row].prompt), 10);
-          logError("Line: " + String(itoa(row, numberArray, 10)) + " has No keys", 1);
+          logError(String("Line: ") + row + " has No keys", 1);
         }
         count++;
       }
@@ -262,10 +262,10 @@ void sendKeyData(int tos) {
         }
       }
     } else {
-      logError("Seek fail:" + String(itoa(offset, numberArray, 10)), 1);
+      logError(String("Seek fail:") + offset, 1);
     }
     f.close();
-    logLine("Sent: " + String(itoa(count, numberArray, 10)) + " Keys.", 700);
+    logLine(String("Sent: ") + count + " Keys.", 700);
   } else {
     logError("FS openFile FAIL", 1);
   }
@@ -307,7 +307,7 @@ void loadConfigData() {
           if (menuCount == 0) {
             logError("No items found", 1);
           };
-          logLine("ITEMS " + String(itoa(menuCount, numberArray, 10)), 10);
+          logLine(String("ITEMS ") + menuCount, 10);
         } else {
           logError("FS openFile FAIL", 1);
         }
@@ -358,6 +358,10 @@ void stopIfButton() {
 
 bool programButtons() {
   return (digitalRead(IN_PIN_A) == LOW) || (digitalRead(IN_PIN_C) == LOW);
+}
+
+bool altButtons() {
+  return (digitalRead(IN_PIN_B) == LOW) || (digitalRead(IN_PIN_D) == LOW);
 }
 
 bool scanButtons() {
@@ -654,7 +658,7 @@ bool passCodeKey(String s, int bits, bool wait, unsigned long lo, unsigned long 
   }
   unsigned long m2 = millis() - m1;
   display.setCursor(0, 0);
-  display.print(String(itoa(m2, numberArray, 10)));
+  display.print(String("") + m2);
   display.display();
   delay(100);
   if ((bb == bits) && (m2 > lo) && (m2 < hi)) {
@@ -746,9 +750,9 @@ void setup() {
 void loop() {
   if (displayMode == MODE_DIAG) {
     if (diagCounter < 128) {
-      Serial.print(String(itoa(diagCounter, numberArray, 10)));
+      Serial.print(diagCounter);
       Serial.print(": ");
-      Serial.println(String(itoa(int(KeyboardLayout_en_UK[diagCounter]), numberArray, 16)));
+      Serial.println(String(itoa(int(KeyboardLayout_en_UK[diagCounter]), numberString, 16)));
       diagCounter++;
     }
   } else {
