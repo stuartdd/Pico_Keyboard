@@ -615,7 +615,7 @@ void errorCode(int c) {
 
 int pcx = 0;
 int pcxi = 1;
-int pcxim = 115;
+int pcxim = 100;
 int pcy = 0;
 int pcyi = 1;
 int pcyim = 49;
@@ -663,17 +663,24 @@ bool passCodeKey(String s, int bits, bool wait, unsigned long lo, unsigned long 
   return false;
 }
 
+String pasPrompt(String in, bool ok) {
+  if (ok) {
+    return in + "+";
+  }
+  return in + "-";
+}
+
 void passCode() {
   bool a = false;
   bool b = false;
   bool c = false;
   bool d = false;
   do {
-    a = passCodeKey("?", BIT_PIN_A, true, 100, 250);
-    b = passCodeKey("1", BIT_PIN_B, true, 1000, 3000);
-    c = passCodeKey("2", BIT_PIN_C, true, 1000, 3000);
-    d = passCodeKey("3", BIT_PIN_D, true, 100, 250);
-    passCodeKey("4", 0, false, 100, 500);
+    a = passCodeKey(pasPrompt("?",true), BIT_PIN_A, true, 100, 400);
+    b = passCodeKey(pasPrompt("1",a), BIT_PIN_B, true, 1000, 3000);
+    c = passCodeKey(pasPrompt("2",b), BIT_PIN_C, true, 1000, 3000);
+    d = passCodeKey(pasPrompt("3",c), BIT_PIN_D, true, 100, 400);
+    passCodeKey(pasPrompt("4",d), 0, false, 100, 500);
     if (a && b && c && d) {
       return;
     }
@@ -697,7 +704,7 @@ void setup() {
   }
   // Clear the buffer
   initDisplayLarge();
-  //passCode();
+  passCode();
   logSubject("Setup:");
   digitalWrite(LIVE_LED, HIGH);
   if (programButtons()) {
