@@ -3,7 +3,8 @@
 #define CONFIG_ROTATE 0           // Rotate flag is [0]
 #define CONFIG_MENU_MAX 1         // Menu number of lines is [1]
 #define CONFIG_DOWN_UP 2          // Swap scroll buttons
-#define CONFIG_DIAG 3             // Swap scroll buttons
+#define CONFIG_DIAG 3             // Diagnostic Flag
+#define CONFIG_PC 4               // Diagnostic PassCode
 
 
 #define CONFIG_VALUE_TRUE '1'   // A NON '0' character indicates flag is true

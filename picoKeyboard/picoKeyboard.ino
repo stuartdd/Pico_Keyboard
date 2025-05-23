@@ -320,7 +320,6 @@ void loadConfigData() {
   if (menuCount == -1) {
     logError("NO File:" + String(MENU_FILE), 1);
   }
-  stopIfButton();
 }
 
 void unplug(uint32_t i) {
@@ -351,7 +350,7 @@ void waitForButton(String m) {
 }
 
 void stopIfButton() {
-  while ((digitalRead(IN_PIN_B) == LOW) || (digitalRead(IN_PIN_D) == LOW)) {
+  while ((digitalRead(IN_PIN_A) == LOW) || (digitalRead(IN_PIN_B) == LOW) || (digitalRead(IN_PIN_C) == LOW) || (digitalRead(IN_PIN_D) == LOW)) {
     delay(10);
   }
 }
@@ -619,31 +618,36 @@ void errorCode(int c) {
 
 int pcx = 0;
 int pcxi = 1;
-int pcxim = 100;
+int pcxmax = 100;
+int pcxmin = 0;
 int pcy = 0;
 int pcyi = 1;
-int pcyim = 49;
+int pcymax = 62;
+int pcymin = 7;
 bool passCodeKey(String s, int bits, bool wait, unsigned long lo, unsigned long hi) {
   buttonBits = 0;
+  pcx = pcxmin;
+  pcy = pcymin;
   while (!scanButtons()) {
     display.clearDisplay();
     display.setCursor(pcx, pcy);
+    display.setTextSize(2);
     display.print(s);
     display.display();
     pcx = pcx + pcxi;
-    if (pcx > pcxim) {
+    if (pcx > pcxmax) {
       pcxi = -1;
     } else {
-      if (pcx < 0) {
+      if (pcx < pcxmin) {
         pcxi = 1;
       }
     }
 
     pcy = pcy + pcyi;
-    if (pcy > pcyim) {
+    if (pcy > pcymax) {
       pcyi = -1;
     } else {
-      if (pcy < 0) {
+      if (pcy < pcymin) {
         pcyi = 1;
       }
     }
@@ -657,7 +661,7 @@ bool passCodeKey(String s, int bits, bool wait, unsigned long lo, unsigned long 
     }
   }
   unsigned long m2 = millis() - m1;
-  display.setCursor(0, 0);
+  display.setCursor(0, 10);
   display.print(String("") + m2);
   display.display();
   delay(100);
@@ -668,23 +672,29 @@ bool passCodeKey(String s, int bits, bool wait, unsigned long lo, unsigned long 
 }
 
 String pasPrompt(String in, bool ok) {
-  if (ok) {
-    return in + "+";
+  if (getConfigBool(CONFIG_DIAG)) {
+    if (ok) {
+      return in + "+";
+    }
+    return in + "-";
   }
-  return in + "-";
+  return in;
 }
 
 void passCode() {
+  if (!getConfigBool(CONFIG_PC)) {
+    return;
+  }
   bool a = false;
   bool b = false;
   bool c = false;
   bool d = false;
   do {
-    a = passCodeKey(pasPrompt("?",true), BIT_PIN_A, true, 100, 400);
-    b = passCodeKey(pasPrompt("1",a), BIT_PIN_B, true, 1000, 3000);
-    c = passCodeKey(pasPrompt("2",b), BIT_PIN_C, true, 1000, 3000);
-    d = passCodeKey(pasPrompt("3",c), BIT_PIN_D, true, 100, 400);
-    passCodeKey(pasPrompt("4",d), 0, false, 100, 500);
+    a = passCodeKey(pasPrompt("?", true), BIT_PIN_A, true, 100, 400);
+    b = passCodeKey(pasPrompt("1", a), BIT_PIN_B, true, 1000, 3000);
+    c = passCodeKey(pasPrompt("2", b), BIT_PIN_C, true, 1000, 3000);
+    d = passCodeKey(pasPrompt("3", c), BIT_PIN_D, true, 100, 400);
+    passCodeKey(pasPrompt("4", d), 0, false, 100, 500);
     if (a && b && c && d) {
       return;
     }
@@ -708,10 +718,13 @@ void setup() {
   }
   // Clear the buffer
   initDisplayLarge();
-  passCode();
+
   logSubject("Setup:");
   digitalWrite(LIVE_LED, HIGH);
   if (programButtons()) {
+    stopIfButton();
+    loadConfigData();
+    passCode();
     digitalWrite(LIVE_LED, LOW);
     logLine("FS Init", 10);
     if (!FatFS.begin()) {
@@ -732,14 +745,10 @@ void setup() {
   } else {
     Keyboard.begin(KeyboardLayout_en_UK);
     loadConfigData();
-    if (getConfigBool(CONFIG_DIAG)) {
-      initSerial();
-      setMode(MODE_DIAG);
-      logSubject("Diag:");
-    } else {
-      setMode(MODE_HID);
-    }
+    passCode();
+    setMode(MODE_HID);
   }
+  stopIfButton();
   display.setRotation(getConfigUint(CONFIG_ROTATE));
   digitalWrite(LIVE_LED, HIGH);
   updateScreen = true;
@@ -794,7 +803,7 @@ void loop() {
           }
           break;
         case MODE_PGM:
-          if ((buttonBits & BIT_PIN_D) == BIT_PIN_D) {
+          if ((buttonBits & BIT_PIN_B) == BIT_PIN_B) {
             reset();
           }
           break;
